@@ -4,51 +4,62 @@
  *
  * Plugin for automatically creating a table of contents on a page using anchors.
  *
+ * @author    Nicola Lambathakis http://www.tattoocms.it/
  * @category    plugin
  * @version     1.0.0
  * @license     http://www.gnu.org/copyleft/gpl.html GNU Public License (GPL)
- * @internal    @properties &lStart=Start level;list;1,2,3,4,5,6;2 &lEnd=End level;list;1,2,3,4,5,6;3 &table_name=Transliteration;list;common,russian;common &tocTitle=Title;string;Contents &tocClass=CSS class;string;toc &tocAnchorType=Anchor type;list;1,2;1 &tocAnchorLen=Maximum anchor length;number;0 &exclude_docs=Exclude Documents by id (comma separated);string; &exclude_templates=Exclude Templates by id (comma separated);string;
+ * @internal    @properties &lStart=Start level;list;1,2,3,4,5,6;2 &lEnd=End level;list;1,2,3,4,5,6;3 &table_name=Transliteration;list;common,russian;common &tocTitle=Title;string;Contents &tocClass=CSS class;string;toc &tocAnchorType=Anchor type;list;1,2;1 &tocAnchorLen=Maximum anchor length;number;0 &include_templates=Include only these Templates by id (comma separated);string; &exclude_docs=Exclude Documents by id (comma separated);string; &exclude_templates=Exclude Templates by id (comma separated);string; &addBackToTop=Enable back to top;list;no,yes;no &backToTopText=Back to top text;string;Back To Top &backToTopTitle=Back to top title attribute;string;Back To Top &backToTopClass=Back to top CSS class;string;toc-back-to-top &backToTopLevels=Back to top on headings (comma separated);string;2
  * @internal    @events OnLoadWebDocument
  * @internal    @modx_category Content
- * @internal    @legacy_names TOC
+ * @internal    @legacy_names evoTOC
  * @internal    @installset base, sample
- */
-
-/**
- * Available parameters:
- *
- * Start level - the starting level of the heading (H1 - H6)
- * End level - the ending level of the heading (H1 - H6)
- * Transliteration - will be used for the first type of anchors. TransAlias plugin tables are used.
- * Title - title for the table of contents. If the field is empty, the title is ignored.
- * CSS class - the style class that will be used in the table of contents (container and nested levels)
- * Anchor type - different variants of generating the anchor name. 1 - transliteration, 2 - numeration
- * Maximum anchor length - used in transliteration and limits the length of the anchor name
- * Exclude Documents by id - A comma separated list of documents id to exclude from the plugin and TOC generation
- * Exclude Templates by id - A comma separated list of templates id to exclude from the plugin and TOC generation
- *
- * Usage:
- *
- * After generation, the table of contents is placed in the global placeholder [+toc+]. Therefore, to display it, you just need to place this placeholder in the appropriate place.
  */
 
 if(!defined('MODX_BASE_PATH')){die('What are you doing? Get out of here!');}
 
 global $modx;
 
+$include_templates = isset($include_templates) ? explode(',', $include_templates) : array();
 $exclude_docs = explode(',',$exclude_docs);
 $exclude_templates = explode(',',$exclude_templates);
-// exclude by doc id or template id
+// clean up arrays
+$include_templates = array_filter(array_map('trim', $include_templates));
+$exclude_docs = array_filter(array_map('trim', $exclude_docs));
+$exclude_templates = array_filter(array_map('trim', $exclude_templates));
+
 $doc_id = $modx -> documentObject['id'];
 $template_id = $modx -> documentObject['template'];
-if (!in_array($doc_id,$exclude_docs) && !in_array($template_id,$exclude_templates)) {
+
+// Check if we should process this document
+$should_process = true;
+
+// If include_templates is not empty, check if current template is included
+if (!empty($include_templates)) {
+    $should_process = in_array($template_id, $include_templates);
+}
+
+// If we should process and there are exclusions, check them
+if ($should_process) {
+    if (in_array($doc_id, $exclude_docs) || in_array($template_id, $exclude_templates)) {
+        $should_process = false;
+    }
+}
+
+if ($should_process) {
     $lStart = isset($lStart) ? $lStart : 2;
     $lEnd = isset($lEnd) ? $lEnd : 3;
     $tocTitle = isset($tocTitle) ? $tocTitle : '';
     $tocClass = isset($tocClass) ? $tocClass : 'toc';
     $tocAnchorType = (isset($tocAnchorType) and ($tocAnchorType == 2)) ? 2 : 1;
     $tocAnchorLen = (isset($tocAnchorLen) and ($tocAnchorLen > 0)) ? $tocAnchorLen : 0;
-
+    // Convert yes/no to boolean for back to top feature
+    $addBackToTop = (isset($addBackToTop) && $addBackToTop === 'yes');
+    $backToTopText = isset($backToTopText) ? $backToTopText : 'Back To Top';
+    $backToTopClass = isset($backToTopClass) ? $backToTopClass : 'toc-back-to-top';
+    // Parse back to top levels
+    $backToTopLevels = isset($backToTopLevels) ? explode(',', $backToTopLevels) : array('2');
+    $backToTopLevels = array_map('trim', $backToTopLevels); // Remove any whitespace
+    
     // Transliteration setup
     $plugin_path = MODX_BASE_PATH.'assets/plugins/transalias';
     $table_name = isset($table_name) ? $table_name : 'russian';
@@ -61,6 +72,11 @@ if (!in_array($doc_id,$exclude_docs) && !in_array($template_id,$exclude_template
     $tocResult = ''; 
     $hArray = array(); // results array
     $cont = $modx->documentObject['content'];
+    
+    // Add a named anchor at the top of the table of contents if back to top is enabled
+    if ($addBackToTop) {
+        $tocResult .= '<div id="table-of-contents"></div>';
+    }
     
     // Use preg_match_all instead of manual string parsing
     $pattern = "/<h([2-6])(.*?)>(.*?)<\/h[2-6]>/si";
@@ -98,6 +114,13 @@ if (!in_array($doc_id,$exclude_docs) && !in_array($template_id,$exclude_template
                         "<h$1$2><a name=\"" . $anchorName . "\"></a>",
                         $hContent
                     );
+
+                    // Add "back to top" link after the heading if enabled and level is included
+                    if ($addBackToTop && in_array($hLevel, $backToTopLevels)) {
+                        $backToTopLink = " <div class=\"" . $backToTopClass . "-container\"><a title=\"$backToTopTitle\" href=\"[~[*id*]~]#table-of-contents\" class=\"" . $backToTopClass . "\">" . $backToTopText . "</a></div>";
+                        $modifiedHeading = $modifiedHeading . $backToTopLink;
+                    }
+
                     $cont = str_replace($hContent, $modifiedHeading, $cont);
                 }
                 
@@ -110,7 +133,7 @@ if (!in_array($doc_id,$exclude_docs) && !in_array($template_id,$exclude_template
         }
     }
 
-    // Create table of contents (rest of the code remains the same)
+    // Create table of contents
     if(count($hArray) > 0) {
         $curLev = 0;
         foreach ($hArray as $key => $value) {
@@ -126,14 +149,11 @@ if (!in_array($doc_id,$exclude_docs) && !in_array($template_id,$exclude_template
                 $tocResult .= '</li>';
             }
             
-            $id = $modx->documentIdentifier;
-            $url = $modx->makeUrl($id,'','','full');
-            
             $curLev = $value['level'];
             if($curLev == $lStart) {
-                $tocResult .= '<li class="TocTop"><a href="' . $url . '#' . $value['anchor'] . '">' . strip_tags($value['header_in']) . '</a>';
+                $tocResult .= '<li class="TocTop"><a href="#' . $value['anchor'] . '">' . strip_tags($value['header_in']) . '</a>';
             } else {
-                $tocResult .= '<li><a href="' . $url . '#' . $value['anchor'] . '">' . strip_tags($value['header_in']) . '</a>';
+                $tocResult .= '<li><a href="#' . $value['anchor'] . '">' . strip_tags($value['header_in']) . '</a>';
             }
         }
         
