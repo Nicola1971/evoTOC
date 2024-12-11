@@ -151,9 +151,9 @@ if ($should_process) {
             
             $curLev = $value['level'];
             if($curLev == $lStart) {
-                $tocResult .= '<li class="TocTop"><a href="#' . $value['anchor'] . '">' . strip_tags($value['header_in']) . '</a>';
+                $tocResult .= '<li class="TocTop"><a href="[~[*id*]~]#' . $value['anchor'] . '">' . strip_tags($value['header_in']) . '</a>';
             } else {
-                $tocResult .= '<li><a href="#' . $value['anchor'] . '">' . strip_tags($value['header_in']) . '</a>';
+                $tocResult .= '<li><a href="[~[*id*]~]#' . $value['anchor'] . '">' . strip_tags($value['header_in']) . '</a>';
             }
         }
         
