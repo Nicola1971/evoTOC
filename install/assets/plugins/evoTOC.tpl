@@ -8,7 +8,7 @@
  * @category    plugin
  * @version     1.0.0
  * @license     http://www.gnu.org/copyleft/gpl.html GNU Public License (GPL)
- * @internal    @properties &lStart=Start level;list;1,2,3,4,5,6;2 &lEnd=End level;list;1,2,3,4,5,6;3 &table_name=Transliteration;list;common,russian;common &tocTitle=Title;string;Contents &tocClass=CSS class;string;toc &tocAnchorType=Anchor type;list;1,2;1 &tocAnchorLen=Maximum anchor length;number;0 &include_templates=Include only these Templates by id (comma separated);string; &exclude_docs=Exclude Documents by id (comma separated);string; &exclude_templates=Exclude Templates by id (comma separated);string; &addBackToTop=Enable back to top;list;no,yes;no &backToTopText=Back to top text;string;Back To Top &backToTopTitle=Back to top title attribute;string;Back To Top &backToTopClass=Back to top CSS class;string;toc-back-to-top &backToTopLevels=Back to top on headings (comma separated);string;2
+ * @internal    @properties &lStart=Start level;list;1,2,3,4,5,6;2 &lEnd=End level;list;1,2,3,4,5,6;3 &table_name=Transliteration;list;common,russian;common &tocTitle=Title;string;Contents &tocClass=CSS class;string;toc &tocAnchorType=Anchor type;list;1,2;1 &tocAnchorLen=Maximum anchor length;number;0 &include_templates=Include only these Templates by id (comma separated);string; &exclude_docs=Exclude Documents by id (comma separated);string; &exclude_templates=Exclude Templates by id (comma separated);string; &addBackToTop=Enable back to top;list;no,yes;no &backToTopText=Back to top text;string;Back To Top &backToTopTitle=Back to top title attribute;string;Back To Top &backToTopClass=Back to top CSS class;string;toc-back-to-top &backToTopLevels=Back to top on headings (comma separated);string;2 &tocAnchorId=TOC anchor ID;string;table-of-contents
  * @internal    @events OnLoadWebDocument
  * @internal    @modx_category Content
  * @internal    @legacy_names evoTOC
@@ -16,6 +16,14 @@
  */
 
 if(!defined('MODX_BASE_PATH')){die('What are you doing? Get out of here!');}
+
+if (!function_exists('generateBackToTopLink')) {
+    function generateBackToTopLink($anchorId, $text, $title, $class) {
+        return " <div class=\"{$class}-container\">" .
+               "<a title=\"{$title}\" href=\"[~[*id*]~]#{$anchorId}\" " .
+               "class=\"{$class}\">{$text}</a></div>";
+    }
+}
 
 global $modx;
 
@@ -46,19 +54,33 @@ if ($should_process) {
 }
 
 if ($should_process) {
+    // Compile patterns
+    $headingPattern = "/<h([2-6])(.*?)>(.*?)<\/h[2-6]>/si";
+    $anchorPattern = "/<a [\s\S]*?name=\"([\w]+)\"/";
+
+    // Check for TOC placeholder early
+    $hasTocPlaceholder = strpos($modx->documentObject['content'], '[+toc+]') !== false;
+
     $lStart = isset($lStart) ? $lStart : 2;
     $lEnd = isset($lEnd) ? $lEnd : 3;
     $tocTitle = isset($tocTitle) ? $tocTitle : '';
     $tocClass = isset($tocClass) ? $tocClass : 'toc';
     $tocAnchorType = (isset($tocAnchorType) and ($tocAnchorType == 2)) ? 2 : 1;
     $tocAnchorLen = (isset($tocAnchorLen) and ($tocAnchorLen > 0)) ? $tocAnchorLen : 0;
+    $tocAnchorId = isset($tocAnchorId) ? $tocAnchorId : 'table-of-contents';
+    
     // Convert yes/no to boolean for back to top feature
     $addBackToTop = (isset($addBackToTop) && $addBackToTop === 'yes');
     $backToTopText = isset($backToTopText) ? $backToTopText : 'Back To Top';
+    $backToTopTitle = isset($backToTopTitle) ? $backToTopTitle : 'Back To Top';
     $backToTopClass = isset($backToTopClass) ? $backToTopClass : 'toc-back-to-top';
-    // Parse back to top levels
+    
+    // Parse back to top levels and ensure they're within TOC range
     $backToTopLevels = isset($backToTopLevels) ? explode(',', $backToTopLevels) : array('2');
-    $backToTopLevels = array_map('trim', $backToTopLevels); // Remove any whitespace
+    $backToTopLevels = array_map('trim', $backToTopLevels);
+    $backToTopLevels = array_filter($backToTopLevels, function($level) use ($lStart, $lEnd) {
+        return $level >= $lStart && $level <= $lEnd;
+    });
     
     // Transliteration setup
     $plugin_path = MODX_BASE_PATH.'assets/plugins/transalias';
@@ -74,21 +96,20 @@ if ($should_process) {
     $cont = $modx->documentObject['content'];
     
     // Add a named anchor at the top of the table of contents if back to top is enabled
-    if ($addBackToTop) {
-        $tocResult .= '<div id="table-of-contents"></div>';
+    if ($addBackToTop && $hasTocPlaceholder) {
+        $tocResult .= '<div id="' . $tocAnchorId . '"></div>';
     }
     
-    // Use preg_match_all instead of manual string parsing
-    $pattern = "/<h([2-6])(.*?)>(.*?)<\/h[2-6]>/si";
-    if (preg_match_all($pattern, $cont, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
+    // Use preg_match_all with compiled pattern
+    if (preg_match_all($headingPattern, $cont, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
         foreach ($matches as $match) {
             $hLevel = $match[1][0];  // The heading level (2-6)
             $hContent = $match[0][0]; // The full heading tag
             $position = $match[0][1]; // The position in the content
             
             if ($hLevel >= $lStart && $hLevel <= $lEnd) {
-                // Check for existing anchor
-                $hasAnchor = preg_match("/<a [\s\S]*?name=\"([\w]+)\"/", $hContent, $getAnchor);
+                // Check for existing anchor using compiled pattern
+                $hasAnchor = preg_match($anchorPattern, $hContent, $getAnchor);
                 
                 $anchorName = '';
                 if ($hasAnchor) {
@@ -116,9 +137,13 @@ if ($should_process) {
                     );
 
                     // Add "back to top" link after the heading if enabled and level is included
-                    if ($addBackToTop && in_array($hLevel, $backToTopLevels)) {
-                        $backToTopLink = " <div class=\"" . $backToTopClass . "-container\"><a title=\"$backToTopTitle\" href=\"[~[*id*]~]#table-of-contents\" class=\"" . $backToTopClass . "\">" . $backToTopText . "</a></div>";
-                        $modifiedHeading = $modifiedHeading . $backToTopLink;
+                    if ($addBackToTop && in_array($hLevel, $backToTopLevels) && $hasTocPlaceholder) {
+                        $modifiedHeading .= generateBackToTopLink(
+                            $tocAnchorId,
+                            $backToTopText,
+                            $backToTopTitle,
+                            $backToTopClass
+                        );
                     }
 
                     $cont = str_replace($hContent, $modifiedHeading, $cont);
@@ -133,8 +158,8 @@ if ($should_process) {
         }
     }
 
-    // Create table of contents
-    if(count($hArray) > 0) {
+    // Create table of contents only if placeholder exists
+    if($hasTocPlaceholder && count($hArray) > 0) {
         $curLev = 0;
         foreach ($hArray as $key => $value) {
             if($curLev == 0) {
